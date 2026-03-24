@@ -414,7 +414,8 @@
 <div class="container">
     <h2>📡 LiDAR Streamer</h2>
     <div>
-<input type="text" id="serverUrl" value="wss://lidar-relay-server-Glm0d.replit.app" style="width: 70%;">      <button id="connectBtn">🔌 Connect</button>
+        <input type="text" id="serverUrl" value="wss://lidar-relay-server-Glm0d.replit.app" style="width: 70%;">
+        <button id="connectBtn">🔌 Connect</button>
     </div>
     <div class="button-group">
         <button id="startBtn" disabled>▶ Start</button>
@@ -444,7 +445,10 @@
             statusDiv.innerText = `✅ Connected to server`;
             startBtn.disabled = false; stopBtn.disabled = false; colorBtn.disabled = false;
         };
-        ws.onerror = () => statusDiv.innerText = '❌ Connection failed';
+        ws.onerror = (err) => {
+            statusDiv.innerText = `❌ Connection failed: ${err.message}`;
+            console.error(err);
+        };
         ws.onclose = () => statusDiv.innerText = '🔌 Disconnected';
     };
 
