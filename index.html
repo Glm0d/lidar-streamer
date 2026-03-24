@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -157,5 +157,122 @@
       xrSession.requestAnimationFrame(onFrame);
     }
   </script>
+</body>
+</html>
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>LiDAR Streamer (iPhone)</title>
+    <style>
+        body { background: #0a0a2a; font-family: system-ui; color: white; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; background: rgba(0,0,0,0.6); border-radius: 28px; padding: 20px; }
+        button, input { background: #2c2c4e; border: none; padding: 12px; border-radius: 40px; font-size: 16px; color: white; margin: 5px; }
+        button { background: #5a67d8; cursor: pointer; }
+        .status { background: #1e1e3a; padding: 12px; border-radius: 16px; margin: 16px 0; word-break: break-word; }
+        .button-group { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>📡 LiDAR Streamer</h2>
+    <div>
+        <input type="text" id="serverUrl" value="wss://lidar-relay-server--glm0d.replit.app" style="width: 70%;">
+        <button id="connectBtn">🔌 Connect</button>
+    </div>
+    <div class="button-group">
+        <button id="startBtn" disabled>▶ Start</button>
+        <button id="stopBtn" disabled>⏹ Stop</button>
+        <button id="colorBtn" disabled>🎨 Random Color</button>
+    </div>
+    <div class="status" id="status">⚡ Not connected</div>
+    <div class="small">💡 Requires iOS 16+ and WebXR experimental features enabled.</div>
+</div>
+
+<script type="module">
+    let ws = null, xrSession = null, streaming = false, frameCount = 0;
+    const frameSkip = 2, maxPoints = 8000;
+
+    const connectBtn = document.getElementById('connectBtn');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const colorBtn = document.getElementById('colorBtn');
+    const serverUrlInput = document.getElementById('serverUrl');
+    const statusDiv = document.getElementById('status');
+
+    connectBtn.onclick = () => {
+        const url = serverUrlInput.value.trim();
+        statusDiv.innerText = `Connecting to ${url} ...`;
+        ws = new WebSocket(url);
+        ws.onopen = () => {
+            statusDiv.innerText = `✅ Connected to server`;
+            startBtn.disabled = false; stopBtn.disabled = false; colorBtn.disabled = false;
+        };
+        ws.onerror = () => statusDiv.innerText = '❌ Connection failed';
+        ws.onclose = () => statusDiv.innerText = '🔌 Disconnected';
+    };
+
+    startBtn.onclick = async () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) { statusDiv.innerText = 'Connect first!'; return; }
+        if (!navigator.xr) { statusDiv.innerText = 'WebXR not supported'; return; }
+        try {
+            statusDiv.innerText = 'Requesting AR session...';
+            xrSession = await navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['depth-sensing'],
+                depthSensing: { usagePreference: ['cpu-optimized'], formatPreference: ['luminance-alpha'] }
+            });
+            streaming = true;
+            statusDiv.innerText = 'Streaming...';
+            const canvas = document.createElement('canvas');
+            document.body.appendChild(canvas);
+            canvas.style.display = 'none';
+            const gl = canvas.getContext('webgl', { xrCompatible: true });
+            xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
+
+            function onFrame(time, frame) {
+                if (!streaming) { xrSession.requestAnimationFrame(onFrame); return; }
+                const pose = frame.getViewerPose(xrSession.renderState.baseLayer.referenceSpace);
+                if (pose) {
+                    const depthInfo = frame.getDepthInformation(xrSession.renderState.baseLayer.referenceSpace);
+                    if (depthInfo) {
+                        const data = depthInfo.data;
+                        const width = depthInfo.width;
+                        const height = depthInfo.height;
+                        const depthBuffer = new Float32Array(data.buffer, data.byteOffset, data.length / 4);
+                        const points = [];
+                        const step = 4;
+                        const fx = 600, fy = 600, cx = width/2, cy = height/2;
+                        for (let y = 0; y < height; y += step) {
+                            for (let x = 0; x < width; x += step) {
+                                const idx = y * width + x;
+                                const depth = depthBuffer[idx];
+                                if (depth > 0.2 && depth < 5.0) {
+                                    const x3d = (x - cx) * depth / fx;
+                                    const y3d = (y - cy) * depth / fy;
+                                    points.push({ x: x3d, y: -y3d, z: depth, r: 255, g: 255, b: 255 });
+                                }
+                            }
+                        }
+                        if (frameCount % frameSkip === 0 && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'pointcloud', points: points.slice(0, maxPoints) }));
+                        }
+                        frameCount++;
+                    }
+                }
+                xrSession.requestAnimationFrame(onFrame);
+            }
+            xrSession.requestAnimationFrame(onFrame);
+        } catch (err) { statusDiv.innerText = `Error: ${err.message}`; }
+    };
+
+    stopBtn.onclick = () => { streaming = false; if (xrSession) xrSession.end(); statusDiv.innerText = 'Stopped'; };
+    colorBtn.onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN)
+            ws.send(JSON.stringify({ type: 'command', command: 'changeColor', color: [Math.random()*255, Math.random()*255, Math.random()*255] }));
+    };
+    window.addEventListener('beforeunload', () => { if (ws) ws.close(); if (xrSession) xrSession.end(); });
+</script>
 </body>
 </html>
