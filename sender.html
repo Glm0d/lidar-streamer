@@ -400,74 +400,199 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>LiDAR Streamer (iPhone)</title>
+    <title>LiDAR Streamer (iPhone → Unity)</title>
     <style>
-        body { background: #0a0a2a; font-family: system-ui; color: white; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; background: rgba(0,0,0,0.6); border-radius: 28px; padding: 20px; }
-        button, input { background: #2c2c4e; border: none; padding: 12px; border-radius: 40px; font-size: 16px; color: white; margin: 5px; }
-        button { background: #5a67d8; cursor: pointer; }
-        .status { background: #1e1e3a; padding: 12px; border-radius: 16px; margin: 16px 0; word-break: break-word; }
-        .button-group { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+        * { user-select: none; -webkit-tap-highlight-color: transparent; }
+        body {
+            background: #0a0a2a;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            color: white;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: rgba(0,0,0,0.6);
+            border-radius: 28px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        }
+        h2 { margin-top: 0; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+        .status {
+            background: #1e1e3a;
+            padding: 12px;
+            border-radius: 16px;
+            font-family: monospace;
+            margin: 16px 0;
+            word-break: break-word;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        input, button {
+            background: #2c2c4e;
+            border: none;
+            padding: 12px 18px;
+            border-radius: 40px;
+            font-size: 16px;
+            color: white;
+            font-weight: 500;
+            outline: none;
+            flex: 1;
+        }
+        button {
+            background: #5a67d8;
+            cursor: pointer;
+            transition: 0.2s;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        button:active { transform: scale(0.96); background: #4c51bf; }
+        button:disabled { opacity: 0.5; transform: none; cursor: not-allowed; }
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 20px 0 12px;
+        }
+        .color-btn { background: #e53e3e; }
+        .reset-btn { background: #319795; }
+        .zoom-btn { background: #2b6cb0; }
+        .small {
+            font-size: 12px;
+            color: #aaa;
+            text-align: center;
+            margin-top: 16px;
+        }
     </style>
 </head>
 <body>
 <div class="container">
     <h2>📡 LiDAR Streamer</h2>
-    <div>
-        <input type="text" id="serverUrl" value="wss://lidar-relay-server-Glm0d.replit.app" style="width: 70%;">
+    <div class="input-group">
+        <input type="text" id="serverIP" placeholder="Quest IP" value="192.168.1.100">
+        <input type="text" id="serverPort" placeholder="Port" value="8765" style="width: 100px;">
         <button id="connectBtn">🔌 Connect</button>
     </div>
-    <div class="button-group">
-        <button id="startBtn" disabled>▶ Start</button>
-        <button id="stopBtn" disabled>⏹ Stop</button>
-        <button id="colorBtn" disabled>🎨 Random Color</button>
-    </div>
     <div class="status" id="status">⚡ Not connected</div>
-    <div class="small">💡 Requires iOS 16+ and WebXR experimental features enabled.</div>
+
+    <div class="button-group">
+        <button id="startBtn" disabled>▶ Start Streaming</button>
+        <button id="stopBtn" disabled>⏹ Stop</button>
+    </div>
+    <div class="button-group">
+        <button id="colorBtn" disabled class="color-btn">🎨 Random Color</button>
+        <button id="resetBtn" disabled class="reset-btn">🔄 Reset View</button>
+        <button id="zoomInBtn" disabled class="zoom-btn">🔍 Zoom +</button>
+        <button id="zoomOutBtn" disabled class="zoom-btn">🔍 Zoom -</button>
+    </div>
+    <div class="small">
+        💡 Requires iPhone 12 Pro+ with iOS 16+<br>
+        WebXR experimental features must be enabled in Safari settings.
+    </div>
 </div>
 
 <script type="module">
-    let ws = null, xrSession = null, streaming = false, frameCount = 0;
-    const frameSkip = 2, maxPoints = 8000;
+    let ws = null;
+    let xrSession = null;
+    let streaming = false;
+    let frameCount = 0;
+    const frameSkip = 2;          // send every 3rd frame
+    const maxPoints = 8000;       // limit points per message
 
+    // DOM elements
     const connectBtn = document.getElementById('connectBtn');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
     const colorBtn = document.getElementById('colorBtn');
-    const serverUrlInput = document.getElementById('serverUrl');
+    const resetBtn = document.getElementById('resetBtn');
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const serverIPInput = document.getElementById('serverIP');
+    const serverPortInput = document.getElementById('serverPort');
     const statusDiv = document.getElementById('status');
 
+    function updateUI(connected, streamingFlag = streaming) {
+        startBtn.disabled = !connected || streamingFlag;
+        stopBtn.disabled = !connected || !streamingFlag;
+        colorBtn.disabled = !connected;
+        resetBtn.disabled = !connected;
+        zoomInBtn.disabled = !connected;
+        zoomOutBtn.disabled = !connected;
+    }
+
+    function setStatus(msg, isError = false) {
+        statusDiv.innerHTML = msg;
+        statusDiv.style.background = isError ? '#5a2a2a' : '#1e1e3a';
+        console.log(msg);
+    }
+
+    // Connect to Unity WebSocket server
     connectBtn.onclick = () => {
-        const url = serverUrlInput.value.trim();
-        statusDiv.innerText = `Connecting to ${url} ...`;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+        }
+        const ip = serverIPInput.value.trim();
+        const port = serverPortInput.value.trim();
+        if (!ip || !port) {
+            setStatus("❌ Please enter IP and port", true);
+            return;
+        }
+        const url = `ws://${ip}:${port}`;
+        setStatus(`🔌 Connecting to ${url} ...`);
         ws = new WebSocket(url);
         ws.onopen = () => {
-            statusDiv.innerText = `✅ Connected to server`;
-            startBtn.disabled = false; stopBtn.disabled = false; colorBtn.disabled = false;
+            setStatus(`✅ Connected to ${ip}:${port}`);
+            updateUI(true, false);
         };
-      ws.onerror = (err) => {
-    console.error('WebSocket error:', err);
-    let errorMsg = '❌ Connection failed';
-    if (err.message) errorMsg += `: ${err.message}`;
-    if (err.target) {
-        errorMsg += ` (readyState: ${err.target.readyState})`;
-        console.log('WebSocket target:', err.target);
-        console.log('URL:', err.target.url);
-    }
-    statusDiv.innerText = errorMsg;
-};
+        ws.onerror = (err) => {
+            console.error('WebSocket error:', err);
+            let errorMsg = '❌ Connection failed';
+            if (err.message) errorMsg += `: ${err.message}`;
+            if (err.target) {
+                errorMsg += ` (readyState: ${err.target.readyState})`;
+                console.log('WebSocket target:', err.target);
+                console.log('URL:', err.target.url);
+            }
+            setStatus(errorMsg, true);
+            updateUI(false, false);
+        };
+        ws.onclose = () => {
+            setStatus("🔌 Disconnected");
+            updateUI(false, false);
+            streaming = false;
+        };
+    };
 
+    // Start WebXR capture and streaming
     startBtn.onclick = async () => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) { statusDiv.innerText = 'Connect first!'; return; }
-        if (!navigator.xr) { statusDiv.innerText = 'WebXR not supported'; return; }
+        if (streaming) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            setStatus("❌ Connect to Unity first", true);
+            return;
+        }
+        if (!navigator.xr) {
+            setStatus("❌ WebXR not supported on this device", true);
+            return;
+        }
         try {
-            statusDiv.innerText = 'Requesting AR session...';
+            setStatus("🎥 Requesting AR session with depth sensing...");
             xrSession = await navigator.xr.requestSession('immersive-ar', {
                 requiredFeatures: ['depth-sensing'],
-                depthSensing: { usagePreference: ['cpu-optimized'], formatPreference: ['luminance-alpha'] }
+                depthSensing: {
+                    usagePreference: ['cpu-optimized'],
+                    formatPreference: ['luminance-alpha']
+                }
             });
+            setStatus("✅ AR session started. Streaming point cloud...");
             streaming = true;
-            statusDiv.innerText = 'Streaming...';
+            updateUI(true, true);
+
+            // Create hidden WebGL canvas (required for XR)
             const canvas = document.createElement('canvas');
             document.body.appendChild(canvas);
             canvas.style.display = 'none';
@@ -475,31 +600,60 @@
             xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
 
             function onFrame(time, frame) {
-                if (!streaming) { xrSession.requestAnimationFrame(onFrame); return; }
+                if (!streaming) {
+                    xrSession.requestAnimationFrame(onFrame);
+                    return;
+                }
                 const pose = frame.getViewerPose(xrSession.renderState.baseLayer.referenceSpace);
                 if (pose) {
                     const depthInfo = frame.getDepthInformation(xrSession.renderState.baseLayer.referenceSpace);
                     if (depthInfo) {
+                        // Get depth buffer as Float32Array
                         const data = depthInfo.data;
                         const width = depthInfo.width;
                         const height = depthInfo.height;
                         const depthBuffer = new Float32Array(data.buffer, data.byteOffset, data.length / 4);
+
+                        // Build point cloud
                         const points = [];
-                        const step = 4;
-                        const fx = 600, fy = 600, cx = width/2, cy = height/2;
+                        const step = 4;          // sample every 4 pixels
+                        const near = 0.2;
+                        const far = 5.0;
+
+                        // Approximate camera intrinsics (you can refine later)
+                        const fx = 600;
+                        const fy = 600;
+                        const cx = width / 2;
+                        const cy = height / 2;
+
                         for (let y = 0; y < height; y += step) {
                             for (let x = 0; x < width; x += step) {
                                 const idx = y * width + x;
                                 const depth = depthBuffer[idx];
-                                if (depth > 0.2 && depth < 5.0) {
+                                if (depth > near && depth < far) {
                                     const x3d = (x - cx) * depth / fx;
                                     const y3d = (y - cy) * depth / fy;
-                                    points.push({ x: x3d, y: -y3d, z: depth, r: 255, g: 255, b: 255 });
+                                    points.push({
+                                        x: x3d,
+                                        y: -y3d,      // invert Y for Unity
+                                        z: depth,
+                                        r: 255,
+                                        g: 255,
+                                        b: 255
+                                    });
                                 }
                             }
                         }
+
+                        // Send point cloud every few frames
                         if (frameCount % frameSkip === 0 && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({ type: 'pointcloud', points: points.slice(0, maxPoints) }));
+                            const limited = points.slice(0, maxPoints);
+                            const msg = {
+                                type: 'pointcloud',
+                                points: limited
+                            };
+                            ws.send(JSON.stringify(msg));
+                            setStatus(`📡 Sent ${limited.length} points (frame ${frameCount})`);
                         }
                         frameCount++;
                     }
@@ -507,15 +661,58 @@
                 xrSession.requestAnimationFrame(onFrame);
             }
             xrSession.requestAnimationFrame(onFrame);
-        } catch (err) { statusDiv.innerText = `Error: ${err.message}`; }
+
+            xrSession.addEventListener('end', () => {
+                setStatus("AR session ended");
+                streaming = false;
+                updateUI(true, false);
+                xrSession = null;
+            });
+
+        } catch (err) {
+            setStatus(`❌ Failed to start AR: ${err.message}`, true);
+            console.error(err);
+            streaming = false;
+            updateUI(true, false);
+        }
     };
 
-    stopBtn.onclick = () => { streaming = false; if (xrSession) xrSession.end(); statusDiv.innerText = 'Stopped'; };
-    colorBtn.onclick = () => {
-        if (ws && ws.readyState === WebSocket.OPEN)
-            ws.send(JSON.stringify({ type: 'command', command: 'changeColor', color: [Math.random()*255, Math.random()*255, Math.random()*255] }));
+    stopBtn.onclick = () => {
+        streaming = false;
+        if (xrSession) {
+            xrSession.end().catch(e => console.warn(e));
+            xrSession = null;
+        }
+        setStatus("⏹ Streaming stopped");
+        updateUI(true, false);
     };
-    window.addEventListener('beforeunload', () => { if (ws) ws.close(); if (xrSession) xrSession.end(); });
+
+    // Command sending helpers
+    function sendCommand(command, extra = {}) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            setStatus("⚠️ Not connected, can't send command", true);
+            return;
+        }
+        const msg = { type: 'command', command, ...extra };
+        ws.send(JSON.stringify(msg));
+        setStatus(`📨 Command: ${command}`);
+    }
+
+    colorBtn.onclick = () => {
+        const r = Math.floor(Math.random() * 255);
+        const g = Math.floor(Math.random() * 255);
+        const b = Math.floor(Math.random() * 255);
+        sendCommand('changeColor', { color: [r, g, b] });
+    };
+    resetBtn.onclick = () => sendCommand('resetPosition');
+    zoomInBtn.onclick = () => sendCommand('scaleUp');
+    zoomOutBtn.onclick = () => sendCommand('scaleDown');
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        if (ws) ws.close();
+        if (xrSession) xrSession.end();
+    });
 </script>
 </body>
 </html>
