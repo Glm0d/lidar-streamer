@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>LiDAR Streamer (iPhone)</title>
+  <style>
+    body { font-family: sans-serif; background: #111; color: white; margin: 20px; }
+    button { margin: 5px; padding: 10px; font-size: 16px; }
+    #status { background: #222; padding: 10px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h2>LiDAR Streamer</h2>
+  <div>
+    <label>Unity IP: </label>
+    <input type="text" id="unityIP" value="192.168.1.100" placeholder="IP of Quest 3">
+    <label>Port: </label>
+    <input type="text" id="port" value="8765" size="5">
+    <button id="connectBtn">Connect</button>
+  </div>
+  <div>
+    <button id="startBtn" disabled>Start Streaming</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <button id="colorBtn" disabled>Change Color</button>
+  </div>
+  <div id="status">Status: Disconnected</div>
+
+  <script type="module">
+    let ws = null;
+    let xrSession = null;
+    let streaming = false;
+    let frameCount = 0;
+    const frameSkip = 2; // send every 3rd frame
+    const maxPoints = 5000;
+
+    // DOM elements
+    const unityIPInput = document.getElementById('unityIP');
+    const portInput = document.getElementById('port');
+    const connectBtn = document.getElementById('connectBtn');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const colorBtn = document.getElementById('colorBtn');
+    const statusDiv = document.getElementById('status');
+
+    connectBtn.onclick = async () => {
+      const ip = unityIPInput.value;
+      const port = portInput.value;
+      ws = new WebSocket(`ws://${ip}:${port}`);
+      ws.onopen = () => {
+        statusDiv.innerText = 'Connected to Unity';
+        startBtn.disabled = false;
+        stopBtn.disabled = false;
+        colorBtn.disabled = false;
+      };
+      ws.onclose = () => {
+        statusDiv.innerText = 'Disconnected';
+        startBtn.disabled = true;
+        stopBtn.disabled = true;
+        colorBtn.disabled = true;
+      };
+      ws.onerror = (err) => {
+        statusDiv.innerText = `WebSocket error: ${err}`;
+      };
+    };
+
+    startBtn.onclick = async () => {
+      if (streaming) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        statusDiv.innerText = 'Connect first';
+        return;
+      }
+      try {
+        if (!xrSession) {
+          await startXR();
+        }
+        streaming = true;
+        statusDiv.innerText = 'Streaming...';
+      } catch (err) {
+        statusDiv.innerText = `Error: ${err.message}`;
+      }
+    };
+
+    stopBtn.onclick = () => {
+      streaming = false;
+      if (xrSession) {
+        xrSession.end();
+        xrSession = null;
+      }
+      statusDiv.innerText = 'Stopped';
+    };
+
+    colorBtn.onclick = () => {
+      // إرسال أمر تغيير اللون إلى Unity
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'command', command: 'changeColor', color: [255, 0, 0] }));
+        statusDiv.innerText = 'Sent change color command';
+      }
+    };
+
+    async function startXR() {
+      if (!navigator.xr) throw new Error('WebXR not supported');
+      xrSession = await navigator.xr.requestSession('immersive-ar', {
+        requiredFeatures: ['depth-sensing'],
+        depthSensing: {
+          usagePreference: ['cpu-optimized'],
+          formatPreference: ['luminance-alpha']
+        }
+      });
+
+      // Create a WebGL canvas (required)
+      const canvas = document.createElement('canvas');
+      document.body.appendChild(canvas);
+      const gl = canvas.getContext('webgl', { xrCompatible: true });
+      xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
+
+      function onFrame(time, frame) {
+        const pose = frame.getViewerPose(xrSession.renderState.baseLayer.referenceSpace);
+        if (pose) {
+          const depthInfo = frame.getDepthInformation(xrSession.renderState.baseLayer.referenceSpace);
+          if (depthInfo) {
+            const data = depthInfo.data;
+            const width = depthInfo.width;
+            const height = depthInfo.height;
+            const depthBuffer = new Float32Array(data.buffer, data.byteOffset, data.length / 4);
+            
+            const points = [];
+            const step = 4;
+            const near = 0.2;
+            const far = 5.0;
+            // Approximate intrinsics
+            const fx = 600;
+            const fy = 600;
+            const cx = width/2;
+            const cy = height/2;
+
+            for (let y = 0; y < height; y += step) {
+              for (let x = 0; x < width; x += step) {
+                const idx = y * width + x;
+                const depth = depthBuffer[idx];
+                if (depth > near && depth < far) {
+                  const x3d = (x - cx) * depth / fx;
+                  const y3d = (y - cy) * depth / fy;
+                  points.push({ x: x3d, y: -y3d, z: depth, r: 255, g: 255, b: 255 });
+                }
+              }
+            }
+
+            if (streaming && ws && ws.readyState === WebSocket.OPEN && frameCount % frameSkip === 0) {
+              ws.send(JSON.stringify({ type: 'pointcloud', points: points.slice(0, maxPoints) }));
+            }
+            frameCount++;
+          }
+        }
+        xrSession.requestAnimationFrame(onFrame);
+      }
+      xrSession.requestAnimationFrame(onFrame);
+    }
+  </script>
+</body>
+</html>
