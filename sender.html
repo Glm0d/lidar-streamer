@@ -445,12 +445,17 @@
             statusDiv.innerText = `✅ Connected to server`;
             startBtn.disabled = false; stopBtn.disabled = false; colorBtn.disabled = false;
         };
-        ws.onerror = (err) => {
-            statusDiv.innerText = `❌ Connection failed: ${err.message}`;
-            console.error(err);
-        };
-        ws.onclose = () => statusDiv.innerText = '🔌 Disconnected';
-    };
+      ws.onerror = (err) => {
+    console.error('WebSocket error:', err);
+    let errorMsg = '❌ Connection failed';
+    if (err.message) errorMsg += `: ${err.message}`;
+    if (err.target) {
+        errorMsg += ` (readyState: ${err.target.readyState})`;
+        console.log('WebSocket target:', err.target);
+        console.log('URL:', err.target.url);
+    }
+    statusDiv.innerText = errorMsg;
+};
 
     startBtn.onclick = async () => {
         if (!ws || ws.readyState !== WebSocket.OPEN) { statusDiv.innerText = 'Connect first!'; return; }
